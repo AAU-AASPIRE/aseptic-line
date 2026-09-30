@@ -1,13 +1,13 @@
-"""Generated modules (modules/*.yaml) against FORTE and the module simulator (4diac/tools/module_sim.py).
+"""Generated modules (cell/modules/*.yaml) against FORTE and the module simulator (cell/sim/module_sim.py).
 
-    4diac/tools/build-modules.ps1
-    python -m pytest tests/test_module_live.py --module-forte-exe 4diac/tools/fbe/build/modules-win/output/bin/forte.exe
+    runtime/build-modules.ps1
+    python -m pytest cell/tests/test_module_live.py --module-forte-exe runtime/fbe/build/modules-win/output/bin/forte.exe
 
-On a Raspberry Pi instead (FORTE in its container, installed with 4diac/tools/pi.py install): each
+On a Raspberry Pi instead (FORTE in its container, installed with deploy/pi.py install): each
 test deploys the module there as the boot file and the Pi's FORTE reaches the simulator on this
 machine over Modbus TCP; no header pin is used.
 
-    python -m pytest tests/test_module_live.py --pi-host 192.168.0.191 --sim-host 192.168.0.131
+    python -m pytest cell/tests/test_module_live.py --pi-host 192.168.0.191 --sim-host 192.168.0.131
 """
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,70 +21,17 @@ from conftest import free_port, launch_forte
 from iec61499_mgmt.bootfile import deployment
 from iec61499_mgmt.protocol import Client
 from iec61499_mgmt.sysfile import load_application
-from modgen import load
+from modgen import SPECS, load, system_file
 from modgen.library import ERRORS, SKILL_STATES, STATES
 from modgen.module import app_name
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "4diac" / "tools"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "cell" / "sim"))
+sys.path.insert(0, str(ROOT / "deploy"))
 from module_sim import ModuleSim, SimServer  # noqa: E402
-sys.path.insert(0, str(ROOT / "4diac" / "tools"))
+from module_ua import ModuleUa  # noqa: E402,F401  (also used by other live tests through this module)
 
 S, E, M = SKILL_STATES, ERRORS, STATES
-
-
-class ModuleUa:
-    """OPC UA client for a module below /Objects/<Module>."""
-    def __init__(self, port, module, host="127.0.0.1"):
-        from asyncua import ua
-        from asyncua.sync import Client as UaClient
-        self.ua, self.module = ua, module
-        self.client = UaClient(f"opc.tcp://{host}:{port}", timeout=10)
-        deadline = time.monotonic() + 10
-        while True:
-            try:
-                self.client.connect()
-                break
-            except Exception:
-                if time.monotonic() > deadline:
-                    raise
-                time.sleep(0.2)
-
-    def node(self, path):
-        """Node below /Objects/<Module>."""
-        return self.client.nodes.objects.get_child([f"1:{self.module}"] + [f"1:{p}" for p in path.split("/")])
-
-    def call(self, path, session, *args):
-        """Call a method with a session ID and Double arguments; return [Accepted, ErrorID]."""
-        parent, method = path.rsplit("/", 1)
-        variants = [self.ua.Variant(session, self.ua.VariantType.String)]
-        variants += [self.ua.Variant(float(a), self.ua.VariantType.Double) for a in args]
-        started = time.monotonic()
-        accepted, error = self.node(parent).call_method(f"1:{method}", *variants)
-        assert time.monotonic() - started < 2.0          # answered at once
-        return [accepted, error]
-
-    def value(self, path):
-        """Read a variable."""
-        return self.node(path).read_value()
-
-    def expect(self, path, value, timeout=3.0):
-        """Wait until a variable has the expected value."""
-        deadline = time.monotonic() + timeout
-        while True:
-            try:
-                actual = self.value(path)
-            except Exception as exc:                   # node not created yet
-                actual = exc
-            if actual == value:
-                return
-            if time.monotonic() > deadline:
-                raise AssertionError(f"{path} = {actual!r}, expected {value!r}")
-            time.sleep(0.05)
-
-    def close(self):
-        """Disconnect."""
-        self.client.disconnect()
 
 
 @contextmanager
@@ -99,10 +46,10 @@ def running(request, tmp_path, spec_name, overrides=None):
     if not exe:
         pytest.skip("Pass --module-forte-exe to run the generated modules against FORTE")
     exe = Path(exe).resolve(strict=True)
-    spec = load(ROOT / "modules" / f"{spec_name}.yaml")
+    spec = load(SPECS / f"{spec_name}.yaml")
     sim = ModuleSim(spec)
     modbus, ua_port = free_port(), free_port()
-    app = load_application(ROOT / "4diac" / spec.project / f"{spec.project}.sys", app_name(spec, "pc"))
+    app = load_application(system_file(spec.project), app_name(spec, "pc"))
     ports = {k: v.replace(f":{spec.modbus.port}:", f":{modbus}:") for k, v in app.parameters.items()
              if k.endswith("_Modbus")}
     with SimServer(sim, port=modbus), launch_forte(exe, tmp_path, None, ["-op", str(ua_port)]) as port, \
@@ -126,14 +73,14 @@ def running_on_pi(request, host, spec_name, overrides=None):
     sim_host = request.config.getoption("--sim-host")
     if not sim_host:
         pytest.skip("Pass --sim-host (this machine's address as the Pi sees it) with --pi-host")
-    spec = load(ROOT / "modules" / f"{spec_name}.yaml")
+    spec = load(SPECS / f"{spec_name}.yaml")
     sim = ModuleSim(spec)
     modbus = free_port()
-    app = load_application(ROOT / "4diac" / spec.project / f"{spec.project}.sys", app_name(spec, "pc"))
+    app = load_application(system_file(spec.project), app_name(spec, "pc"))
     endpoint = f"{spec.modbus.host}:{spec.modbus.port}:"
     remote = {k: v.replace(endpoint, f"{sim_host}:{modbus}:") for k, v in app.parameters.items()
               if k.endswith("_Modbus")}
-    user = request.config.getoption("--pi-user") or load(ROOT / "modules" / "filling.yaml").targets["pi"].user
+    user = request.config.getoption("--pi-user") or load(SPECS / "filling.yaml").targets["pi"].user
     args = type("Args", (), {"host": host, "user": user, "port": 61499})()
     with SimServer(sim, host="0.0.0.0", port=modbus):
         pitool.ssh(args, "cat > ~/forte/boot/forte.fboot && cd ~/forte && docker compose restart",
