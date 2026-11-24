@@ -32,7 +32,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(Path(__file__).resolve().parent), str(ROOT / "aas61499-tools" / "tests")]
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(ROOT.parent / "modsync" / "tests"), str(ROOT.parent / "modplan" / "tests"), str(ROOT.parent / "modreg" / "tests")]
 import scenarios as sc                                                       # noqa: E402
 from modgen.spec import Composite, ModuleSpec, Parallel, Step               # noqa: E402
 from modplan.check import check, simulate                                    # noqa: E402

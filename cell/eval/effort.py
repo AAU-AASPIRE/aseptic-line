@@ -39,7 +39,7 @@ import sys
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "aas61499-tools"), str(ROOT / "aas61499-tools" / "tests"), str(Path(__file__).parent)]
+sys.path[:0] = [str(ROOT.parent / "modsync" / "tests"), str(ROOT.parent / "modplan" / "tests"), str(ROOT.parent / "modreg" / "tests"), str(Path(__file__).parent)]
 
 import scenarios as sc                                                        # noqa: E402
 from modgen.spec import Composite, Parallel, Step                             # noqa: E402
