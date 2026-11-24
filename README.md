@@ -1,3 +1,5 @@
+<img src=".github/icon.png" alt="" width="96" align="right">
+
 # aseptic-line
 
 The AAU Smart Production Lab's aseptic filling line, built with AASPIRE: its modules' specs and
