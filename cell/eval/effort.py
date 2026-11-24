@@ -51,7 +51,7 @@ from modsync.sources import load                                              # 
 
 RESULTS = Path(__file__).parent / "results"
 UI = Path(__file__).parent / "ui" / "effort-ui.cjs"
-WEB = ROOT / "basyx-aas-web-ui" / "aas-web-ui"
+WEB = ROOT.parent / "basyx-aas-web-ui" / "aas-web-ui"
 SHELL = "FillingModuleAAS"
 RECONFIGURE = "python -m modsync reconfigure http://localhost:8081 --shell FillingModuleAAS"
 

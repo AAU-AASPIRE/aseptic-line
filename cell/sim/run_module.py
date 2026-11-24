@@ -30,8 +30,8 @@ ROOT = SIM.parents[1]
 sys.path.insert(0, str(SIM))
 from module_sim import ModuleSim, SimServer  # noqa: E402
 
-FORTE = ROOT / "runtime" / "fbe" / "build" / "modules-win" / "output" / "bin" / "forte.exe"
-CACHE = ROOT / "runtime" / ".cache"
+FORTE = ROOT.parent / "forte-runtime" / "fbe" / "build" / "modules-win" / "output" / "bin" / "forte.exe"
+CACHE = ROOT.parent / "forte-runtime" / ".cache"
 
 
 def wait_port(port, timeout=15):

@@ -9,7 +9,7 @@ from rdflib import Namespace, RDFS  # noqa: E402
 
 from modgen import SPECS, load, specs  # noqa: E402
 
-VOCABULARY = Path(__file__).resolve().parents[2] / "ontology" / "Vocabulary"
+VOCABULARY = Path(__file__).resolve().parents[3] / "ontologies" / "Vocabulary"
 BASE = "https://smartproductionlab.aau.dk/semantics/"
 LAB = Namespace(BASE)
 SKILLS = Namespace("https://smartproductionlab.aau.dk/skills/")

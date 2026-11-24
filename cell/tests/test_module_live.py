@@ -27,7 +27,7 @@ from modgen.module import app_name
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "cell" / "sim"))
-sys.path.insert(0, str(ROOT / "deploy"))
+sys.path.insert(0, str(ROOT.parent / "deploy"))
 from module_sim import ModuleSim, SimServer  # noqa: E402
 from module_ua import ModuleUa  # noqa: E402,F401  (also used by other live tests through this module)
 

@@ -47,7 +47,7 @@ from module_ua import ModuleUa  # noqa: E402
 REPOSITORY = "http://localhost:8081"
 DMP = "http://localhost:8085"
 INFLUX = "http://localhost:8086"
-SECRETS = ROOT / "deploy" / "aas" / ".env"
+SECRETS = ROOT.parent / "deploy" / "aas" / ".env"
 # The module's OPC UA port, the same in every run: a module that restarts keeps its address, the
 # DMP reconnects to it, and the same AASs published again leave its routes as they are.
 UA_PORT = 4841
@@ -219,7 +219,7 @@ def _check(found: dict, **wanted) -> dict:
 def planar_controller():
     """The planar controller on its simulated driver (a 4 x 3 table, shuttles 1 and 2), its OPC UA
     server on PLANAR_PORT of every interface, served by a thread of its own."""
-    controller = ROOT / "planar-controller"
+    controller = ROOT.parent / "planar-controller"
     if not (controller / "planar").is_dir():
         pytest.skip("the planar-controller submodule is needed")
     sys.path.insert(0, str(controller))

@@ -20,7 +20,7 @@ from aas_model.product_template import Product, plan_id          # noqa: E402
 from modreg.ontology import Blueprint, check as ontology_check  # noqa: E402
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
-ARSO = Path(__file__).resolve().parents[2] / "ontology" / "ARSO"
+ARSO = Path(__file__).resolve().parents[3] / "ontologies" / "ARSO"
 BASE = "https://smartproductionlab.aau.dk"
 sys.path.insert(0, str(EXAMPLES))
 
