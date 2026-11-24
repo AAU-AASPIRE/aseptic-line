@@ -1,0 +1,123 @@
+# Stoppering module. It began as a port of the ESP32-S3 station (StopperingModule.cpp: a piston on a
+# DC motor, a servo arm and a plunger); since 8 Oct 2026 it is built like the other modules of the
+# line: a linear axis that brings the head down onto the vial (a stepper motor with a limit switch,
+# moved to a position) and one small linear actuator that presses the stopper in.
+# Regenerate: python -m modgen
+module: Stoppering
+project: StopperingModule
+package: stoppering
+opcua_root: /Objects/Stoppering
+modbus: {host: 127.0.0.1, port: 1503, unit: 1, poll_ms: 10}   # 4diac/tools/module_sim.py
+
+targets:
+  pc: {host: localhost, io: modbus}
+  pi: {host: 192.168.0.134, user: admin, io: gpio, board: pi5,
+       pwm_root: /hostsys/class/pwm}    # the stoppering Pi, a Raspberry Pi 5 (until 22 Oct the Pi 4 at .191)
+
+equipment:
+  LinearAxis:
+    kind: LinearAxis
+    description: Lift of the stoppering head, a stepper motor through a step and direction driver, with a limit switch at the top (home)
+    # As the filling module's axis (the same linear stage): a TB6600 driver, its PUL+, DIR+ and ENA+
+    # straight to the Pi's pins, PUL-, DIR- and ENA- on GND (no level converter needed).
+    inputs:
+      # As the filling module's since 13 Nov: a normally closed limit switch at the other end of the
+      # stage, between the line and GND, opening when pressed (the pull-up pulls the line high at home;
+      # a broken wire reads as home too).
+      AtHome: {modbus: d0, gpio: {line: 23, bias: pull_up}}        # Pi pin 16
+    outputs:
+      # ENA+ high switches the TB6600 off: the motor is on while the line is low.
+      Enable: {modbus: c0, gpio: {line: 17, active_low: true}}     # Pi pin 11
+      # Pi pin 13, DIR, inverted since 13 Nov as the filling module's: Up (homing) and Down name the way
+      # towards and away from the switch, now at the other end of the stage.
+      Down:   {modbus: c1, gpio: {line: 27, active_low: true}}
+      # PUL: PWM0 on GPIO18 (Pi pin 12), one step per period (1 kHz); 50 % duty while it moves.
+      Step:   {type: LREAL, modbus: h0, pwm: {channel: 0, period_ns: 1000000}, gain: 655.35,
+               minimum: 0, maximum: 100, unit: "%"}
+    commands:
+      Stop: {}
+      Up:   {Enable: true, Step: 50}
+      Down: {Enable: true, Down: true, Step: 50}
+    # As the filling module's axis: the speed and the travel are assumed until it is measured.
+    position: {unit: mm, speed: 20.0, increase: Down, decrease: Up, home: AtHome, minimum: 0.0, maximum: 60.0}
+    location: {y: 60.0, z: 100.0, rx: 180.0}   # the head at home, over the transfer point; Z down the stroke
+    sim: {stepper: {step: Step, direction: Down, enable: Enable, speed: 20.0, travel: 60.0, start: 15.0,
+                    switches: {AtHome: 0.0}}}
+  Piston:
+    kind: StopperingPiston
+    description: Small linear actuator that presses the stopper in, through an L298N (IN1 retract, IN2 extend); no sensors
+    outputs:
+      Retract: {modbus: c2, gpio: 5}                               # pin 29, IN1
+      Extend:  {modbus: c3, gpio: 6}                               # pin 31, IN2
+    commands:
+      Stop: {}
+      Extend: [Extend]
+      Retract: [Retract]
+      # Back in and off: what ends a press, also one that is cut short. The stroke times are
+      # placeholders until the actuator is measured.
+      Back: [{Retract: true, for: 3s}, {}]
+    sim: {axis: {forward: Extend, backward: Retract, travel_s: 3.0, start: 0.0}}
+
+skills:
+  Home:
+    description: Head up to the limit switch; from there its position is known
+    equipment: LinearAxis
+    command: Up
+    postcondition: AtHome
+    timeout: 8s
+  MoveAxis:
+    description: Head to Position, measured down from the limit switch; the direction follows from where it is
+    equipment: LinearAxis
+    move_to: Position
+    parameters:
+      Position: {unit: mm, minimum: 0.0, maximum: 60.0, default: 0.0, meaning: Position, description: Where to move to}
+    timeout: 8s
+  PressStopper:
+    description: Press the stopper in, the piston out for the stroke and back in (open loop, by time)
+    equipment: Piston
+    command: Extend
+    stop: Back
+    after: 3.0
+    # What holds on this module of the Pressing it realizes (the vocabulary says the rest): the
+    # piston presses with the head down on the vial, a placeholder until the station is measured,
+    # and the head stays put meanwhile.
+    capability:
+      values: {PressPosition: {value: 40.0, unit: mm}}
+      precondition: {LinearAxis.Position: "= PressPosition"}
+      invariant: {LinearAxis.Position: unchanged}
+  RetractPiston:
+    description: Piston back in for the stroke (open loop); for a piston left out by an abort
+    equipment: Piston
+    command: Retract
+    after: 3.0
+
+composites:
+  Stoppering:
+    description: Head down onto the vial, press the stopper in, head up again
+    # The working position is the station's: a constant of the step, changed by reconfiguration.
+    execute: [{MoveAxis: {Position: 40.0}, as: HeadDown}, PressStopper, Home]    # up again by homing
+    stop: [Home]
+
+procedures:
+  Resetting: [RetractPiston, Home]     # the piston in before the head moves
+  Stopping: [Home]
+
+# Where things are (ARSO 0.12, docs/locations-and-layout.md): poses in the module's frame, its origin
+# at the middle of the module's front at the height of the planar table, Y out of the front towards
+# the table, Z up; mm and degrees. The module's front is at the table's edge in the line, so a shuttle
+# that serves it stands half its width (60 mm) in front of it. Placeholders until the module is
+# measured; the transfer point's RZ turns the shuttle as the simulated table's station of this module
+# does (planar-controller/tests/line_scenario.py).
+points:
+  Transfer: {meaning: TransferPoint, location: {y: 60.0, rz: -90.0}, description: Where a shuttle stands with the vial under the head}
+  Press: {meaning: ProcessingPoint, location: {y: 60.0, z: 60.0}, description: The head on the stopper at the press position (40 mm down)}
+
+# What the module offers (see filling.yaml): illustrative values, as the vial stoppering station of
+# the process planner's pharma example, until the station is measured.
+capabilities:
+  Stoppering:
+    description: Place a rubber stopper on a filled container (vial, syringe, cartridge) and press it in
+    properties:
+      ContainerType: {values: [vial, syringe, cartridge]}
+      GraspDiameter: {minimum: 6.0, maximum: 30.0, unit: mm}
+      StopperDiameter: {minimum: 6.0, maximum: 20.0, unit: mm}

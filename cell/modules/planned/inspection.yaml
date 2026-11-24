@@ -1,0 +1,71 @@
+# Inspection module. Planned, not built: the lab has no inspection station yet, so there is no
+# program and no hardware behind this spec. The equipment and the motions are a first description
+# to work with (7 Oct 2026), written like the filling and stoppering modules; the capability is
+# that of the process planner's vial inspection station, with illustrative values.
+# It lives outside cell/modules so that no project is generated for it. Its AAS: modreg build <this file>.
+module: Inspection
+project: InspectionModule
+package: inspection
+opcua_root: /Objects/Inspection
+modbus: {host: 127.0.0.1, port: 1505, unit: 1, poll_ms: 10}
+
+targets:
+  pc: {host: localhost, io: modbus}
+
+# Components as named on 8 Oct 2026: a camera above the vial and one beside it. Each has its own
+# image evaluation: a trigger in, done and the verdict out (a guess).
+equipment:
+  TopCamera:
+    kind: Camera
+    description: Camera above the vial
+    inputs:
+      Done:   {modbus: d0}
+      Passed: {modbus: d1}
+    outputs:
+      Trigger: {modbus: c0}
+    commands:
+      Idle: {}
+      Capture: [Trigger]
+  SideCamera:
+    kind: Camera
+    description: Camera beside the vial
+    inputs:
+      Done:   {modbus: d2}
+      Passed: {modbus: d3}
+    outputs:
+      Trigger: {modbus: c1}
+    commands:
+      Idle: {}
+      Capture: [Trigger]
+
+# Two components of one kind have the same skill. A module's skills are named apart, so each is
+# named after its camera here.
+skills:
+  CaptureTop:
+    description: Take the image from above and wait for the camera's verdict
+    equipment: TopCamera
+    command: Capture
+    postcondition: Done
+    timeout: 3s
+    results: {Passed: Passed}
+  CaptureSide:
+    description: Take the image from the side and wait for the camera's verdict
+    equipment: SideCamera
+    command: Capture
+    postcondition: Done
+    timeout: 3s
+    results: {Passed: Passed}
+
+composites:
+  Inspection:
+    description: Look at the vial from above and from the side, report what each camera found
+    execute: [CaptureTop, CaptureSide]
+    results: {TopPassed: CaptureTop.Passed, SidePassed: CaptureSide.Passed}
+
+capabilities:
+  Inspection:
+    description: Inspect a closed container (vial, syringe, cartridge) with the camera and decide whether it passes
+    properties:
+      ContainerType: {values: [vial, syringe, cartridge]}
+      GraspDiameter: {minimum: 6.0, maximum: 30.0, unit: mm}
+      InspectionMethod: {value: vision}

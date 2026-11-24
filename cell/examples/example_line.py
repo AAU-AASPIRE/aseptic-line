@@ -1,0 +1,262 @@
+"""Build the AASs of the example line, the lab's reference models: the line, the planar table and
+its shuttles, the modules and their components, three products and the process of each on the line.
+
+    python cell/examples/example_line.py --out <folder> [--publish http://<host>:8081] [--target pi]
+
+Every AAS is an instance of aas-model's types (``Module``, ``Component``, ``ProductionSystem``,
+``Product``, ``Process``):
+
+- The modules' AASs are made from their module specs by ``modreg``, the same spec their IEC 61499
+  program is generated from: the filling and stoppering modules are built and run (``cell/modules``),
+  the capping module's program is generated too (its Raspberry Pi is still to come), and the
+  inspection module is planned only (``cell/modules/planned``: no program behind it yet). The table's and the shuttles' come from what the planar controller says
+  (``modreg.planar``).
+- The products are written out in Python (``products/``): a 2 mL vial, a prefilled syringe of 1 mL
+  and a cartridge of 3 mL. Their recipes name no equipment.
+- The process of each product on the line, its recipe bound to the modules, is written out too
+  (``processes/``). The plan check (``plan_check.check_process``) follows every binding into the
+  products' and the modules' AASs; a process whose Validation says otherwise is refused.
+
+Every AAS is written to ``<folder>/<idShort>.json``, and with ``--publish`` sent to an AAS server
+(created, or replaced if it is there already).
+"""
+from __future__ import annotations
+
+import argparse
+import functools
+import json
+from pathlib import Path
+import sys
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+from modgen import SPECS, load                          # noqa: E402
+from aas_model.constants import BASE_URL                                  # noqa: E402
+from aas_pydantic.submodel_templates.hierarchical_structures import ArcheType      # noqa: E402
+from modgen.spec import Location, Point                  # noqa: E402
+from modreg import model, planar, profile as profiles   # noqa: E402
+from modreg.frames import place, relative               # noqa: E402
+from aas_model.submodel_templates.coordinates import Coordinates                 # noqa: E402
+from aas_model.submodel_templates.variables import MeasurementsGroup, Variables   # noqa: E402
+from modreg.service import AasServer, mapped_last       # noqa: E402
+
+import plan_check                                        # noqa: E402
+from aas_model.id_injector import inject_ids            # noqa: E402
+from processes.cartridge_3ml_on_filling_line import cartridge_3ml_on_filling_line            # noqa: E402
+from processes.prefilled_syringe_1ml_on_filling_line import prefilled_syringe_1ml_on_filling_line  # noqa: E402
+from processes.vial_2ml_on_filling_line import vial_2ml_on_filling_line                      # noqa: E402
+from products.cartridge_3ml import cartridge_3ml        # noqa: E402
+from products.prefilled_syringe_1ml import prefilled_syringe_1ml  # noqa: E402
+from products.vial_2ml import vial_2ml                  # noqa: E402
+
+# The resources of the example line, in the order a product passes them.
+RESOURCES = [SPECS / "filling.yaml", SPECS / "stoppering.yaml", SPECS / "capping.yaml",
+             SPECS / "planned" / "inspection.yaml"]
+
+
+# The products made on the line, and the process of each on it (written out in Python).
+PRODUCTS = [vial_2ml, prefilled_syringe_1ml, cartridge_3ml]
+PROCESSES = [vial_2ml_on_filling_line, prefilled_syringe_1ml_on_filling_line, cartridge_3ml_on_filling_line]
+# The xbots on the planar table.
+SHUTTLES = (1, 2, 3)
+
+# The line: what it is called, and the modules a product passes that are not described yet (each has a
+# Kuka robot and a gripper, and a Raspberry Pi of its own).
+LINE = "FillingLine"
+BEFORE, AFTER = ["LoadingModule"], ["UnloadingModule"]
+# Where each module's base is relative to the planar table's base (ARSO 0.13), the root of the
+# line's coordinates: the table's corner, the frame its shuttles move in (4 x 3 flyways, 960 x 720
+# mm). Each module has its front at the table's edge, facing in, so that its transfer point is a
+# station of the planar controller's simulated table (planar-controller/tests/line_scenario.py).
+# Placeholders until the modules report where they are (RFID).
+TABLE = "PlanarTable"
+LAYOUT = {
+    "LoadingModule": Location(x=0.0, y=180.0, rz=-90.0),
+    "FillingModule": Location(x=240.0, y=720.0, rz=180.0),
+    "StopperingModule": Location(x=600.0, y=720.0, rz=180.0),
+    "CappingModule": Location(x=960.0, y=360.0, rz=90.0),
+    "InspectionModule": Location(x=960.0, y=120.0, rz=90.0),
+    "UnloadingModule": Location(x=660.0, y=0.0),
+}
+# Points of the line itself: where the loading robot places a vial on a shuttle and where the
+# unloading robot picks it (the robots' modules are not described yet), on the table.
+POINTS = {"Infeed": Point(meaning="PlacePoint", location=Location(x=60.0, y=180.0),
+                          description="Where the loading robot places a vial on a shuttle"),
+          "Outfeed": Point(meaning="PickPoint", location=Location(x=660.0, y=60.0),
+                           description="Where the unloading robot picks a vial from a shuttle")}
+# The stations a shuttle stops at on its way through the line, in order, each a point of the line or
+# a module's transfer point (planar-controller/tests/line_scenario.py names them so): (AAS, coordinate).
+STATIONS = {"Infeed": (f"{LINE}AAS", "Infeed"), "Filling": ("FillingModuleAAS", "Transfer"),
+            "Stoppering": ("StopperingModuleAAS", "Transfer"), "Capping": ("CappingModuleAAS", "Transfer"),
+            "Outfeed": (f"{LINE}AAS", "Outfeed")}
+
+
+@functools.lru_cache(maxsize=None)
+def described(path: Path, target: str | None = None) -> tuple[dict, ...]:
+    """The AASs of a module and of its components, from its spec (for ``target``, else, or if the
+    spec has no such target, its first; the module is not read). The module's is the first."""
+    spec = load(path)
+    target = target if target in spec.targets else next(iter(spec.targets))
+    found = profiles.describe_all(spec, target, spec_path=path.relative_to(HERE.parents[1]).as_posix())
+    return tuple(model.build(profile) for profile in found)
+
+
+def resource(path: Path, target: str | None = None) -> dict:
+    """The AAS of a module."""
+    return described(path, target)[0]
+
+
+def components(target: str | None = None) -> dict[str, dict]:
+    """The AASs of the components of every module of the line, by idShort."""
+    return {plan_check.shell_of(env)["idShort"]: env for path in RESOURCES for env in described(path, target)[1:]}
+
+
+@functools.lru_cache(maxsize=None)
+def planar_table() -> tuple[dict, ...]:
+    """The AASs of the planar table (4 x 3 flyways), whose base is the root of the line's
+    coordinates, and of its shuttles, as the controller would describe them (``modreg profile
+    planar``). The table's is the first."""
+    return tuple(model.build(found) for found in planar.describe_all(planar.Table(columns=4, rows=3, shuttles=SHUTTLES)))
+
+
+def table() -> dict:
+    """The AAS of the planar table."""
+    return planar_table()[0]
+
+
+def shuttles() -> dict[str, dict]:
+    """The AASs of the shuttles on the table, by idShort."""
+    return {plan_check.shell_of(env)["idShort"]: env for env in planar_table()[1:]}
+
+
+def table_base() -> tuple[str, str]:
+    """The root of the line's coordinates: (the table's AAS id, its coordinate)."""
+    return plan_check.shell_of(table())["id"], "TableBase"
+
+
+def line_profile(resources: dict[str, dict]) -> dict:
+    """The profile of the line: a system made of its modules, each found by its asset id, and the
+    coordinates of its own points, relative to the table's base."""
+    asset = lambda name: f"{BASE_URL}/assets/{name}"                                       # noqa: E731
+    node = lambda found, about: model.LocatedNode(                                          # noqa: E731
+        entity_type="SelfManagedEntity", global_asset_id=found, description=about)
+    nodes = {name: node(asset(name), f"{name}: not described yet") for name in BEFORE}
+    for env in resources.values():
+        shell = plan_check.shell_of(env)
+        name = shell["assetInformation"]["globalAssetId"].rsplit("/", 1)[-1]
+        nodes[name] = node(shell["assetInformation"]["globalAssetId"], shell["idShort"])
+    nodes.update({name: node(asset(name), f"{name}: not described yet") for name in AFTER})
+    nodes[TABLE] = node(plan_check.shell_of(table())["assetInformation"]["globalAssetId"],
+                        "The planar table the shuttles move on (planar-controller)")
+    base = profiles.coordinate_ref(table_base()[1], table_base()[0])
+    points = {name: profiles.coordinate(name, point.meaning, point.location, base, description=point.description)
+              for name, point in POINTS.items()}
+    system = model.ProductionSystem(id_short=f"{LINE}AAS", id=f"{BASE_URL}/aas/{LINE}AAS", asset_type=f"{model.RESOURCE}/System",
+                                 description="The line a vial passes: loading, filling, stoppering, capping, inspection, unloading")
+    system.hierarchical_structures = model.LocatedStructures(
+        id_short="HierarchicalStructures", ArcheType=ArcheType(value="OneDown"),
+        EntryNode=model.LocatedEntryNode(global_asset_id=asset(LINE), description="The line", Node=nodes))
+    system.variables = Variables(id_short="Variables", Measurements=MeasurementsGroup(
+        value={"Coordinates": Coordinates(coordinate=points)}))
+    return model.profile(model.ProductionSystem.model_validate(system.model_dump()), global_asset_id=asset(LINE))
+
+
+def line(resources: dict[str, dict]) -> dict:
+    """The AAS of the line."""
+    return model.build(line_profile(resources))
+
+
+def stations(envs: list[dict]) -> dict[str, tuple[float, float, float]]:
+    """Where a shuttle stops for each station, (x, y, rz) in the planar table's frame, from the AASs
+    of the table, the line and its modules (``envs``): what the line scenario of the planar
+    controller drives to."""
+    found = {}
+    for name, point in STATIONS.items():
+        pose = relative(envs, (f"{TABLE}AAS", "TableBase"), point)
+        x, y, _ = pose.position
+        rz = (pose.heading + 180.0) % 360.0 - 180.0                       # in [-180, 180)
+        found[name] = tuple(round(v, 3) + 0.0 for v in (x, y, rz))         # + 0.0: no -0.0
+    return found
+
+
+def asset_id(asset) -> str:
+    """The asset of a product or a process: ``<base>/assets/<idShort without AAS>``."""
+    return f"{BASE_URL}/assets/{asset.id_short.removesuffix('AAS')}"
+
+
+def products() -> dict[str, dict]:
+    """The AASs of the products, by idShort."""
+    found = {}
+    for make in PRODUCTS:
+        asset = make()
+        inject_ids(asset)
+        found[asset.id_short] = model.environment(asset, asset_id(asset))
+    return found
+
+
+def build(target: str | None = None) -> tuple[dict[str, dict], dict[str, dict]]:
+    """The resources and the products of the example line, each as an AAS environment by idShort;
+    the modules described for ``target`` where their spec has it (``pi``: the module on its Pi)."""
+    resources = {}
+    for path in RESOURCES:
+        env = resource(path, target)
+        # Put on the line: the module reports where its base is on the table (later by RFID).
+        name = plan_check.shell_of(env)["assetInformation"]["globalAssetId"].rsplit("/", 1)[-1]
+        env = place(env, "ModuleBase", table_base(), LAYOUT[name])
+        resources[plan_check.shell_of(env)["idShort"]] = env
+    return resources, products()
+
+
+class ValidationError(ValueError):
+    """A process AAS says its recipe fits the line, and it does not (or the other way round)."""
+
+
+def processes(resources: dict[str, dict], products: dict[str, dict]) -> dict[str, dict]:
+    """The process AAS of every product on the line, by idShort; each checked: what its Validation
+    says has to be what the plan check finds."""
+    found = {}
+    for make in PROCESSES:
+        asset = make()
+        inject_ids(asset)
+        env = model.environment(asset, asset_id(asset))
+        product = next(p for p in products.values()
+                       if plan_check.shell_of(p)["id"] == asset.process_information.Product.value.key[0].value)
+        findings = plan_check.check_process(product, env, resources)
+        stated = (asset.validation.Result.value, [item.value for item in asset.validation.Findings.value])
+        if stated != ("DoesNotFit" if findings else "Fits", findings):
+            raise ValidationError(f"{asset.id_short} says {stated}, the plan check finds {findings or 'that it fits'}")
+        found[asset.id_short] = env
+    return found
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--out", default="aas", help="folder the AASs are written to")
+    parser.add_argument("--publish", metavar="URL", help="AAS server to send them to, e.g. http://localhost:8081")
+    parser.add_argument("--target", help="describe the modules for this target of their specs (pi: on their Pis); "
+                                         "default each spec's first (pc)")
+    args = parser.parse_args(argv)
+
+    resources, made = build(args.target)
+    system = line(resources)
+    everything = {plan_check.shell_of(system)["idShort"]: system, **{plan_check.shell_of(env)["idShort"]: env for env in planar_table()},
+                  **resources, **components(args.target), **made, **processes(resources, made)}
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    for name, env in everything.items():
+        (out / f"{name}.json").write_text(json.dumps(env, indent=1), encoding="utf-8")
+        print(f"{name}: {len(env['submodels'])} submodels -> {out / (name + '.json')}")
+    print(f"every process fits the line ({len(PROCESSES)} processes of {len(made)} products; {len(resources)} modules, "
+          f"{len(components(args.target))} components, 1 line, 1 table, {len(SHUTTLES)} shuttles)")
+    if args.publish:
+        server = AasServer(args.publish)
+        names = {id(env): name for name, env in everything.items()}
+        for env in mapped_last(list(everything.values())):
+            name, done = names[id(env)], server.publish(env)
+            print(f"{name}: {sum(d.startswith('POST') for d in done)} created, {sum(d.startswith('PUT') for d in done)} replaced")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
