@@ -20,7 +20,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT.parent / "modsync" / "tests"), str(ROOT.parent / "modplan" / "tests"), str(ROOT.parent / "modreg" / "tests")]
+sys.path[:0] = [str(ROOT.parent / "aaspire-tools" / "tests")]
 
 from modgen import SPECS, load                                              # noqa: E402
 from modplan.export import hddl, hddl_steps, pddl, pddl_steps, plan_text   # noqa: E402

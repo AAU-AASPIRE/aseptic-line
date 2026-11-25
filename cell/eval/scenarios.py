@@ -40,7 +40,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT), str(ROOT / "cell" / "sim"), str(ROOT.parent / "modsync" / "tests"), str(ROOT.parent / "modplan" / "tests"), str(ROOT.parent / "modreg" / "tests")]
+sys.path[:0] = [str(ROOT), str(ROOT / "cell" / "sim"), str(ROOT.parent / "aaspire-tools" / "tests")]
 
 from conftest import free_port, launch_forte                                  # noqa: E402
 from iec61499_mgmt.bootfile import boot_file, deployment                    # noqa: E402

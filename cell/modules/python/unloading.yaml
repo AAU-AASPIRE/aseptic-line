@@ -1,5 +1,5 @@
 # Unloading module: a KUKA robot (KR C4) takes the container off its shuttle and places it in the
-# tray. Served in Python by modpy (module-py), as the loading module is (loading.yaml says how); its
+# tray. Served in Python by modpy (aaspire-tools), as the loading module is (loading.yaml says how); its
 # robot runs a program of its own, so its jobs are numbered from 1 too.
 #     python -m modpy serve cell/modules/python/unloading.yaml --port 4841
 module: Unloading

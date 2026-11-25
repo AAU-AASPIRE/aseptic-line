@@ -32,7 +32,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(Path(__file__).resolve().parent), str(ROOT.parent / "modsync" / "tests"), str(ROOT.parent / "modplan" / "tests"), str(ROOT.parent / "modreg" / "tests")]
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(ROOT.parent / "aaspire-tools" / "tests")]
 import scenarios as sc                                                       # noqa: E402
 from modgen.spec import Composite, ModuleSpec, Parallel, Step               # noqa: E402
 from modplan.check import check, simulate                                    # noqa: E402
@@ -566,12 +566,14 @@ def q4t() -> list[dict]:
 
 
 def setup() -> dict:
-    commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    dirty = bool(subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=no",
-                                 "aas61499-tools", "iec61499-skill-lib", "cell/eval", "cell/modules"],
-                                capture_output=True, text=True).stdout.strip())
+    def git(repo, *args):
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True).stdout.strip()
+    tools = ROOT.parent / "aaspire-tools"                   # the tools, beside the line
+    dirty = bool(git(ROOT, "status", "--porcelain", "--untracked-files=no", "cell/eval", "cell/modules")
+                 or git(tools, "status", "--porcelain", "--untracked-files=no"))
     return {"machine": f"{platform.processor()} {platform.system()} {platform.release()}",
-            "python": platform.python_version(), "commit": commit[:12], "tools_dirty": dirty}
+            "python": platform.python_version(), "commit": git(ROOT, "rev-parse", "HEAD")[:12],
+            "tools_commit": git(tools, "rev-parse", "HEAD")[:12], "tools_dirty": dirty}
 
 
 def main() -> None:

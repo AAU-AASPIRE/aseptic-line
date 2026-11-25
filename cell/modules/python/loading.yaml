@@ -1,5 +1,5 @@
 # Loading module: a KUKA robot (KR C4) takes a container from the tray and places it on a shuttle.
-# Served in Python by modpy (module-py), not generated for FORTE (3 Nov 2026, the user's choice): on
+# Served in Python by modpy (aaspire-tools), not generated for FORTE (3 Nov 2026, the user's choice): on
 # the robot's Raspberry Pi a Python process serves the module over OPC UA as a generated module
 # serves it, with the same occupation, module state and skills; each skill is a job of the robot
 # program instead of IEC 61499 blocks (docs/demo-modules.md, section 3). The robot is simulated until

@@ -117,7 +117,7 @@ def ready(sim, ua, session):
 
 
 # --------------------------------------------------------------------------------------------
-# Filler: the generator's test module (iec61499-skill-lib/tests/modules)
+# Filler: the generator's test module (aaspire-tools/tests/modules)
 # --------------------------------------------------------------------------------------------
 
 @pytest.fixture
